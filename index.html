@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pudding Pop! - เกมกดพุดดิ้งสุดน่ารัก</title>
+    <!-- Tailwind CSS for UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts for Cute Thai Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Mitr:wght@300;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Firebase SDKs (Compat version for script-tag global usage) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        body {
+            font-family: 'Mitr', sans-serif;
+            background: radial-gradient(circle, #fffdf0 0%, #ffecbe 100%);
+            overflow-x: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        .pudding-container {
+            perspective: 1000px;
+        }
+
+        /* Pudding Idle Wobble Animation */
+        .pudding-wobble {
+            animation: idleWobble 4s ease-in-out infinite;
+            transform-origin: bottom center;
+            transition: transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes idleWobble {
+            0%, 100% { transform: scale(1) rotate(0deg); }
+            25% { transform: scale(1.03, 0.97) rotate(1deg); }
+            50% { transform: scale(0.97, 1.03) rotate(-1deg); }
+            75% { transform: scale(1.01, 0.99) rotate(0.5deg); }
+        }
+
+        /* Active click squeeze effect (เด้งสู้มือ) */
+        .pudding-active {
+            transform: scale(1.3, 0.6) translateY(10%) !important;
+        }
+        
+        .pudding-rebound {
+            transform: scale(0.85, 1.25) translateY(-5%) !important;
+        }
+
+        /* Floating Number Effect */
+        .pop-number {
+            position: absolute;
+            pointer-events: none;
+            animation: floatUp 0.8s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+            font-family: 'Chakra Petch', sans-serif;
+            font-weight: bold;
+            z-index: 50;
+        }
+
+        @keyframes floatUp {
+            0% {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(0.8) translateY(0);
+            }
+            50% {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1.4) translateY(-40px) rotate(5deg);
+            }
+            100% {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(1) translateY(-100px) rotate(-5deg);
+            }
+        }
+
+        /* Custom Scrollbar for Leaderboard */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(254, 243, 199, 0.5);
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #f59e0b;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #d97706;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-4 relative">
+
+    <!-- Sparkles Background elements -->
+    <div class="absolute inset-0 pointer-events-none overflow-hidden opacity-30">
+        <div class="absolute top-10 left-10 w-8 h-8 rounded-full bg-yellow-300 blur-sm animate-pulse"></div>
+        <div class="absolute top-40 right-20 w-12 h-12 rounded-full bg-pink-300 blur-md animate-pulse"></div>
+        <div class="absolute bottom-20 left-15 w-16 h-16 rounded-full bg-orange-300 blur-lg animate-pulse"></div>
+    </div>
+
+    <!-- Header Section -->
+    <header class="w-full max-w-md text-center z-10 mt-2">
+        <h1 class="text-4xl font-extrabold text-amber-800 drop-shadow-[0_2px_2px_rgba(251,191,36,0.8)] flex items-center justify-center gap-2">
+            🍮 Pudding Pop! 🍮
+        </h1>
+        <p class="text-amber-700 text-sm mt-1">จิ้มพุดดิ้งดึ๋งๆ สะสมแต้มและสู้ศึกระดับโลก!</p>
+    </header>
+
+    <!-- Main Game Area -->
+    <main class="w-full max-w-md flex flex-col items-center justify-center my-4 z-10 relative">
+        
+        <!-- Score & Combo Tracker -->
+        <div class="bg-white/80 backdrop-blur-md rounded-2xl px-6 py-3 shadow-lg border-2 border-amber-200 text-center w-full mb-6 relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-1 bg-amber-400" id="unlock-progress"></div>
+            <div class="text-xs text-amber-600 font-bold uppercase tracking-wider">คะแนนทั้งหมดของคุณ</div>
+            <div class="text-4xl font-black text-amber-900 my-1" id="score-display">0</div>
+            
+            <div class="flex justify-between items-center mt-2 pt-2 border-t border-amber-100 text-xs">
+                <span class="text-amber-700 font-medium flex items-center gap-1">
+                    <i class="fa-solid fa-cookie-bite"></i> สกินปัจจุบัน: 
+                    <span id="skin-name" class="font-bold text-amber-900">รสคาราเมลดั้งเดิม</span>
+                </span>
+                <span class="text-amber-700 font-medium" id="next-unlock-text">
+                    อีก <span class="font-bold text-pink-600" id="clicks-to-next">1,000</span> ครั้งเพื่อสกินถัดไป
+                </span>
+            </div>
+        </div>
+
+        <!-- Pudding Click Target Area -->
+        <div class="pudding-container w-72 h-72 flex items-center justify-center relative cursor-pointer" id="pudding-button">
+            <!-- Ripple Wave Effect on click -->
+            <div id="ripple-effect" class="absolute w-64 h-64 rounded-full bg-amber-300/30 scale-0 opacity-0 pointer-events-none transition-all duration-300"></div>
+            
+            <!-- SVG Pudding Graphic -->
+            <svg id="pudding-svg" class="w-full h-full pudding-wobble drop-shadow-[0_15px_15px_rgba(139,92,26,0.25)]" viewBox="0 0 200 200">
+                <!-- Base Shadow -->
+                <ellipse cx="100" cy="175" rx="75" ry="15" fill="#d97706" opacity="0.15"/>
+                
+                <!-- Plate / Dish -->
+                <path d="M25,170 C25,180 175,180 175,170 C175,160 25,160 25,170 Z" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="3"/>
+                <ellipse cx="100" cy="170" rx="65" ry="8" fill="#f1f5f9"/>
+
+                <!-- Body (Will be dynamically colored via CSS/JS) -->
+                <!-- Base body color of Pudding -->
+                <path id="pudding-body" d="M50,165 L60,100 C62,85 138,85 140,100 L150,165 C150,175 50,175 50,165 Z" fill="#fef3c7" stroke="#b45309" stroke-width="4"/>
+                
+                <!-- Syrup Top / Sauce -->
+                <path id="pudding-sauce" d="M60,100 C62,85 138,85 140,100 C135,115 125,108 115,115 C105,120 95,110 85,115 C75,120 65,110 60,100 Z" fill="#b45309"/>
+                
+                <!-- Custard Highlights / Shines -->
+                <ellipse cx="80" cy="120" rx="6" ry="12" fill="#ffffff" opacity="0.4" transform="rotate(-15 80 120)"/>
+                <ellipse cx="125" cy="135" rx="4" ry="8" fill="#ffffff" opacity="0.3" transform="rotate(-10 125 135)"/>
+                
+                <!-- Face Features (Cute Eyes & Mouth) -->
+                <g id="pudding-face">
+                    <!-- Eyes -->
+                    <circle id="eye-l" cx="80" cy="135" r="5" fill="#451a03"/>
+                    <circle id="eye-r" cx="120" cy="135" r="5" fill="#451a03"/>
+                    <!-- Blush -->
+                    <circle cx="73" cy="142" r="5" fill="#f87171" opacity="0.6"/>
+                    <circle cx="127" cy="142" r="5" fill="#f87171" opacity="0.6"/>
+                    <!-- Mouth (Cute W or Open Pop) -->
+                    <path id="pudding-mouth" d="M96,142 Q100,146 104,142" fill="none" stroke="#451a03" stroke-width="3" stroke-linecap="round"/>
+                </g>
+            </svg>
+        </div>
+
+        <!-- Nickname Setting & Online Trigger -->
+        <div class="mt-6 w-full bg-white/70 backdrop-blur-sm rounded-2xl p-4 shadow-md border border-amber-100 flex flex-col gap-2">
+            <label class="text-xs font-bold text-amber-800">ชื่อของคุณสำหรับกระดานผู้นำ:</label>
+            <div class="flex gap-2">
+                <input type="text" id="username-input" maxlength="15" placeholder="ตั้งชื่อเล่นดึ๋งๆ..." class="flex-1 px-3 py-2 rounded-xl border-2 border-amber-200 focus:outline-none focus:border-amber-500 text-sm text-amber-900 bg-white/90">
+                <button id="save-username-btn" class="px-4 py-2 bg-amber-500 text-white font-bold rounded-xl text-sm hover:bg-amber-600 active:scale-95 transition-all flex items-center gap-1 shadow">
+                    <i class="fa-solid fa-circle-check"></i> บันทึก
+                </button>
+            </div>
+            <p id="user-status-text" class="text-[10px] text-emerald-600 font-semibold text-center mt-1 hidden">
+                <i class="fa-solid fa-wifi animate-ping mr-1"></i> เชื่อมต่ออันดับออนไลน์แล้วในชื่อ <span id="current-saved-name" class="underline"></span>
+            </p>
+        </div>
+
+    </main>
+
+    <!-- Leaderboard / Control Drawer Trigger Section -->
+    <footer class="w-full max-w-md z-10 mt-4 flex flex-col gap-3">
+        <!-- Action Buttons -->
+        <div class="grid grid-cols-2 gap-3">
+            <button id="open-leaderboard-btn" class="py-3 px-4 bg-amber-600 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-amber-700 active:scale-95 transition shadow-md">
+                <i class="fa-solid fa-trophy"></i> จัดอันดับโลก (Global)
+            </button>
+            <button id="open-skins-btn" class="py-3 px-4 bg-pink-500 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-pink-600 active:scale-95 transition shadow-md">
+                <i class="fa-solid fa-palette"></i> คลังสกินวิเศษ
+            </button>
+        </div>
+
+        <div class="text-center text-[10px] text-amber-700/60 font-medium">
+            พัฒนาด้วย ❤️ สำหรับแฟนๆ พุดดิ้งดึ๋งๆ | © 2026 Pudding Pop Ltd.
+        </div>
+    </footer>
+
+    <!-- MODAL 1: Leaderboard (จัดอันดับ) -->
+    <div id="leaderboard-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden transition-opacity duration-300 opacity-0">
+        <div class="bg-white rounded-3xl w-full max-w-sm overflow-hidden border-4 border-amber-400 shadow-2xl flex flex-col max-h-[85vh]">
+            <!-- Header -->
+            <div class="bg-amber-400 p-4 text-center relative">
+                <button class="close-modal-btn absolute right-4 top-4 text-amber-900 hover:text-red-700 transition text-xl">
+                    <i class="fa-solid fa-circle-xmark"></i>
+                </button>
+                <h3 class="text-2xl font-black text-amber-950 flex items-center justify-center gap-2">
+                    🏆 อันดับนักกดพุดดิ้งโลก
+                </h3>
+                <p class="text-xs text-amber-900/80 font-medium mt-1">ใครจะเป็นราชาแห่งความดึ๋งดั๋ง!</p>
+            </div>
+            
+            <!-- List Content -->
+            <div class="p-4 overflow-y-auto flex-1 bg-amber-50/50" id="leaderboard-list">
+                <!-- Template Loading Spinner -->
+                <div class="flex flex-col items-center justify-center py-10" id="leaderboard-spinner">
+                    <i class="fa-solid fa-cookie animate-spin text-4xl text-amber-500 mb-2"></i>
+                    <p class="text-sm text-amber-700">กำลังเชื่อมต่อแดนพุดดิ้งออนไลน์...</p>
+                </div>
+                <!-- Leaderboard records will be rendered here -->
+                <div id="leaderboard-items" class="space-y-2 hidden"></div>
+            </div>
+
+            <!-- User placement highlight at bottom -->
+            <div class="bg-amber-100 p-3 border-t-2 border-amber-200 text-center text-xs font-bold text-amber-900" id="user-rank-status">
+                กรุณาตั้งชื่อเล่นเพื่อลงแข่งกระดานผู้นำโลก!
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 2: Skins Collection (คลังสกินพุดดิ้ง) -->
+    <div id="skins-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden transition-opacity duration-300 opacity-0">
+        <div class="bg-white rounded-3xl w-full max-w-sm overflow-hidden border-4 border-pink-400 shadow-2xl flex flex-col max-h-[85vh]">
+            <!-- Header -->
+            <div class="bg-pink-400 p-4 text-center relative text-white">
+                <button class="close-modal-btn absolute right-4 top-4 text-pink-900 hover:text-red-700 transition text-xl">
+                    <i class="fa-solid fa-circle-xmark"></i>
+                </button>
+                <h3 class="text-2xl font-black flex items-center justify-center gap-2">
+                    🎨 คลังรสชาติพุดดิ้ง
+                </h3>
+                <p class="text-xs text-pink-100 font-medium mt-1">ปลดล็อกรสชาติใหม่ทุกๆ 1,000 ครั้ง!</p>
+            </div>
+
+            <!-- List of Skins -->
+            <div class="p-4 overflow-y-auto flex-1 bg-pink-50/30 space-y-3" id="skins-list">
+                <!-- Skins will be rendered via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Settings Icon -->
+    <div class="absolute top-4 right-4 z-20 flex items-center gap-2">
+        <button id="toggle-sound-btn" class="w-10 h-10 rounded-full bg-white/80 border border-amber-200 flex items-center justify-center text-amber-800 shadow hover:bg-white active:scale-95 transition">
+            <i class="fa-solid fa-volume-high" id="sound-icon"></i>
+        </button>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. GAME STATE & CONFIGURATION
+        // ==========================================
+        const STATE = {
+            score: 0,
+            skinIndex: 0,
+            soundEnabled: true,
+            username: localStorage.getItem('pudding_username') || '',
+            userId: localStorage.getItem('pudding_userid') || '',
+            highestScoreSent: 0,
+            dbInitialized: false
+        };
+
+        // Initialize user ID if not exist
+        if (!STATE.userId) {
+            STATE.userId = 'user_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('pudding_userid', STATE.userId);
+        }
+
+        // Pudding Skins Configuration (Unlock every 1000 clicks)
+        const SKINS = [
+            { name: "คาราเมลดั้งเดิม", bodyColor: "#fef3c7", sauceColor: "#b45309", bgGradient: "radial-gradient(circle, #fffdf0 0%, #ffecbe 100%)" },
+            { name: "มัทฉะชาเขียวเข้มข้น", bodyColor: "#d9f99d", sauceColor: "#15803d", bgGradient: "radial-gradient(circle, #f0fdf4 0%, #dcfce7 100%)" },
+            { name: "ดาร์กช็อกโกแลตมูส", bodyColor: "#b45309", sauceColor: "#451a03", bgGradient: "radial-gradient(circle, #fdf8f6 0%, #ffedd5 100%)" },
+            { name: "สตรอว์เบอร์รีโยเกิร์ต", bodyColor: "#fbcfe8", sauceColor: "#be185d", bgGradient: "radial-gradient(circle, #fdf2f8 0%, #fce7f3 100%)" },
+            { name: "ชานมไต้หวันพ่นไฟ", bodyColor: "#fde047", sauceColor: "#a16207", bgGradient: "radial-gradient(circle, #fefce8 0%, #fef9c3 100%)" },
+            { name: "ซากุระมิลค์กี้พุดดิ้ง", bodyColor: "#ffe4e6", sauceColor: "#db2777", bgGradient: "radial-gradient(circle, #fff1f2 0%, #ffe4e6 100%)" },
+            { name: "บลูเบอร์รีชีสพุดดิ้ง", bodyColor: "#ddd6fe", sauceColor: "#4c1d95", bgGradient: "radial-gradient(circle, #faf5ff 0%, #f3e8ff 100%)" },
+            { name: "มิลก์กี้วนิลาไอซ์", bodyColor: "#ffffff", sauceColor: "#3b82f6", bgGradient: "radial-gradient(circle, #f0f9ff 0%, #e0f2fe 100%)" }
+        ];
+
+        // Load local score
+        const localSavedScore = parseInt(localStorage.getItem('pudding_score') || '0', 10);
+        STATE.score = localSavedScore;
+        STATE.skinIndex = Math.min(Math.floor(STATE.score / 1000), SKINS.length - 1);
+
+        // ==========================================
+        // 2. SOUND SYNTHESIZER (Web Audio API)
+        // ==========================================
+        class AudioSynth {
+            constructor() {
+                this.ctx = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+
+            playPopSound() {
+                if (!STATE.soundEnabled) return;
+                this.init();
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+
+                const now = this.ctx.currentTime;
+                
+                // Sound 1: High frequency pop
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'sine';
+                // Pitch starts high, drops instantly for classic pop
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.exponentialRampToValueAtTime(150, now + 0.1);
+                
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                
+                osc.start(now);
+                osc.stop(now + 0.12);
+
+                // Sound 2: High pitch 'drip' click
+                const osc2 = this.ctx.createOscillator();
+                const gain2 = this.ctx.createGain();
+                osc2.type = 'triangle';
+                osc2.frequency.setValueAtTime(800, now);
+                osc2.frequency.exponentialRampToValueAtTime(400, now + 0.05);
+                gain2.gain.setValueAtTime(0.15, now);
+                gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.06);
+                
+                osc2.connect(gain2);
+                gain2.connect(this.ctx.destination);
+                osc2.start(now);
+                osc2.stop(now + 0.06);
+            }
+
+            playBoingSound() {
+                if (!STATE.soundEnabled) return;
+                this.init();
+                const now = this.ctx.currentTime;
+
+                // Create spring-like 'boing' wobble
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(150, now);
+                // Vibrato effect for rubberiness
+                osc.frequency.linearRampToValueAtTime(200, now + 0.05);
+                osc.frequency.linearRampToValueAtTime(130, now + 0.1);
+                osc.frequency.linearRampToValueAtTime(170, now + 0.15);
+                osc.frequency.linearRampToValueAtTime(140, now + 0.2);
+
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.22);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.22);
+            }
+        }
+
+        const sfx = new AudioSynth();
+
+        // ==========================================
+        // 3. FIREBASE SETUP (Leaderboard Backend)
+        // ==========================================
+        let db, auth;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'pudding-pop-1';
+
+        // Check if config exists
+        if (typeof __firebase_config !== 'undefined') {
+            try {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                // Initialize using Namespaced API
+                const app = firebase.initializeApp(firebaseConfig);
+                auth = firebase.auth();
+                db = firebase.firestore();
+                STATE.dbInitialized = true;
+            } catch (err) {
+                console.error("Firebase Initialization Failed:", err);
+            }
+        }
+
+        // Initialize Authentication & Setup Dynamic Observers
+        async function setupOnlineLeaderboard() {
+            if (!STATE.dbInitialized) return;
+
+            try {
+                // Anonymous auth standard protocol
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await auth.signInWithCustomToken(__initial_auth_token);
+                } else {
+                    await auth.signInAnonymously();
+                }
+
+                auth.onAuthStateChanged((user) => {
+                    if (user) {
+                        STATE.userId = user.uid; // overwrite local with official uid
+                        localStorage.setItem('pudding_userid', STATE.userId);
+                        
+                        // Show active online indicator
+                        if (STATE.username) {
+                            showOnlineBadge();
+                            syncScoreToOnline(STATE.score);
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Auth process error", error);
+            }
+        }
+
+        // Update database with latest score
+        async function syncScoreToOnline(targetScore) {
+            if (!STATE.dbInitialized || !auth.currentUser || !STATE.username) return;
+            
+            // Limit network overhead: only send if higher than previously sent score
+            if (targetScore <= STATE.highestScoreSent) return;
+
+            const userDocRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard').doc(STATE.userId);
+            try {
+                await userDocRef.set({
+                    username: STATE.username,
+                    score: targetScore,
+                    lastUpdated: Date.now(),
+                    userId: STATE.userId
+                }, { merge: true });
+                STATE.highestScoreSent = targetScore;
+            } catch (e) {
+                console.error("Failed to sync score online", e);
+            }
+        }
+
+        // ==========================================
+        // 4. UI ELEMENT BINDINGS & RENDERING
+        // ==========================================
+        const puddingBtn = document.getElementById('pudding-button');
+        const puddingSvg = document.getElementById('pudding-svg');
+        const puddingMouth = document.getElementById('pudding-mouth');
+        const puddingBody = document.getElementById('pudding-body');
+        const puddingSauce = document.getElementById('pudding-sauce');
+        const scoreDisplay = document.getElementById('score-display');
+        const skinNameDisplay = document.getElementById('skin-name');
+        const clicksToNextDisplay = document.getElementById('clicks-to-next');
+        const unlockProgressBar = document.getElementById('unlock-progress');
+        const usernameInput = document.getElementById('username-input');
+        const saveUsernameBtn = document.getElementById('save-username-btn');
+        const userStatusText = document.getElementById('user-status-text');
+        const currentSavedNameDisplay = document.getElementById('current-saved-name');
+        
+        // Modals
+        const leaderboardModal = document.getElementById('leaderboard-modal');
+        const skinsModal = document.getElementById('skins-modal');
+        const openLeaderboardBtn = document.getElementById('open-leaderboard-btn');
+        const openSkinsBtn = document.getElementById('open-skins-btn');
+        const closeBtns = document.querySelectorAll('.close-modal-btn');
+        
+        // Sound toggle
+        const toggleSoundBtn = document.getElementById('toggle-sound-btn');
+        const soundIcon = document.getElementById('sound-icon');
+
+        // Initial setup on screen
+        if (STATE.username) {
+            usernameInput.value = STATE.username;
+            currentSavedNameDisplay.textContent = STATE.username;
+            userStatusText.classList.remove('hidden');
+        }
+
+        // Apply skin theme properties
+        function applySkinTheme() {
+            const currentSkin = SKINS[STATE.skinIndex];
+            puddingBody.setAttribute('fill', currentSkin.bodyColor);
+            puddingSauce.setAttribute('fill', currentSkin.sauceColor);
+            skinNameDisplay.textContent = currentSkin.name;
+            document.body.style.background = currentSkin.bgGradient;
+
+            // Update info for next skin
+            const nextMilestone = (STATE.skinIndex + 1) * 1000;
+            const remaining = nextMilestone - STATE.score;
+
+            if (STATE.skinIndex >= SKINS.length - 1) {
+                clicksToNextDisplay.parentElement.innerHTML = "⭐️ คุณปลดล็อกครบทุกรสชาติแล้ว!";
+                unlockProgressBar.style.width = "100%";
+            } else {
+                clicksToNextDisplay.textContent = remaining.toLocaleString();
+                const progressPercent = ((STATE.score % 1000) / 1000) * 100;
+                unlockProgressBar.style.width = `${progressPercent}%`;
+            }
+        }
+
+        // Update Score and handle skin updates
+        function addScore(amount, clickEvent) {
+            STATE.score += amount;
+            scoreDisplay.textContent = STATE.score.toLocaleString();
+            localStorage.setItem('pudding_score', STATE.score);
+
+            // Determine Skin upgrade
+            const newSkinIndex = Math.min(Math.floor(STATE.score / 1000), SKINS.length - 1);
+            if (newSkinIndex > STATE.skinIndex) {
+                STATE.skinIndex = newSkinIndex;
+                sfx.playBoingSound(); // Special level up sound
+                showCelebrationEffect();
+            }
+
+            applySkinTheme();
+            createFloatyNumber(amount, clickEvent);
+            syncScoreToOnline(STATE.score);
+        }
+
+        // Floating dynamic numbers at exact finger/mouse click point
+        function createFloatyNumber(amount, event) {
+            const num = document.createElement('div');
+            num.classList.add('pop-number');
+            num.textContent = `+${amount}`;
+            
+            // Random colors for nice visual pop
+            const colors = ['#b45309', '#be185d', '#15803d', '#4c1d95', '#0369a1', '#b91c1c'];
+            const randomColor = colors[Math.floor(Math.random() * colors.length)];
+            num.style.color = randomColor;
+
+            // Get exact coordinates
+            let x, y;
+            if (event) {
+                const rect = puddingBtn.getBoundingClientRect();
+                if (event.touches && event.touches.length > 0) {
+                    x = event.touches[0].clientX;
+                    y = event.touches[0].clientY;
+                } else {
+                    x = event.clientX;
+                    y = event.clientY;
+                }
+            } else {
+                // Fallback default center
+                const rect = puddingBtn.getBoundingClientRect();
+                x = rect.left + rect.width / 2;
+                y = rect.top + rect.height / 2;
+            }
+
+            num.style.left = `${x}px`;
+            num.style.top = `${y}px`;
+
+            document.body.appendChild(num);
+
+            // Remove element after finish
+            setTimeout(() => {
+                num.remove();
+            }, 800);
+        }
+
+        // Pop Cat mouth opening & pudding spring compression
+        function handlePuddingPress(event) {
+            event.preventDefault(); // Stop default zooming/scrolling on double tap
+            
+            // 1. Audio synthesis trigger
+            sfx.playPopSound();
+
+            // 2. Playful mouth opening
+            puddingMouth.setAttribute('d', 'M92,142 C92,154 108,154 108,142 Z');
+            puddingMouth.setAttribute('fill', '#451a03');
+
+            // 3. Playful active wobble classes
+            puddingSvg.classList.remove('pudding-wobble');
+            puddingSvg.classList.add('pudding-active');
+
+            // Add points
+            addScore(1, event);
+        }
+
+        function handlePuddingRelease() {
+            // Restore mouth shape
+            puddingMouth.setAttribute('d', 'M96,142 Q100,146 104,142');
+            puddingMouth.setAttribute('fill', 'none');
+
+            // Apply rebound spring compression before resetting to idle
+            puddingSvg.classList.remove('pudding-active');
+            puddingSvg.classList.add('pudding-rebound');
+
+            setTimeout(() => {
+                puddingSvg.classList.remove('pudding-rebound');
+                puddingSvg.classList.add('pudding-wobble');
+            }, 100);
+        }
+
+        // Celebration Sparkles when new skin unlocked
+        function showCelebrationEffect() {
+            for (let i = 0; i < 20; i++) {
+                const conf = document.createElement('div');
+                conf.className = 'absolute pointer-events-none rounded-full z-40 animate-ping';
+                conf.style.backgroundColor = `hsl(${Math.random() * 360}, 100%, 65%)`;
+                conf.style.width = `${Math.random() * 15 + 5}px`;
+                conf.style.height = conf.style.width;
+                
+                const rect = puddingBtn.getBoundingClientRect();
+                const startX = rect.left + rect.width/2;
+                const startY = rect.top + rect.height/2;
+
+                conf.style.left = `${startX + (Math.random() - 0.5) * 150}px`;
+                conf.style.top = `${startY + (Math.random() - 0.5) * 150}px`;
+                
+                document.body.appendChild(conf);
+                setTimeout(() => conf.remove(), 1000);
+            }
+        }
+
+        function showOnlineBadge() {
+            currentSavedNameDisplay.textContent = STATE.username;
+            userStatusText.classList.remove('hidden');
+        }
+
+        // Update username process
+        saveUsernameBtn.addEventListener('click', () => {
+            const val = usernameInput.value.trim();
+            if (!val) return;
+            
+            STATE.username = val;
+            localStorage.setItem('pudding_username', val);
+            showOnlineBadge();
+
+            // Fire and forget score synchronization to leaderboards
+            syncScoreToOnline(STATE.score);
+
+            // Pop sound indicator
+            sfx.playBoingSound();
+        });
+
+        // ==========================================
+        // 5. INTERACTIVE MODALS & REALTIME DATA
+        // ==========================================
+        
+        // Show/Hide Helpers
+        function openModal(modal) {
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.add('opacity-100');
+            }, 10);
+        }
+
+        function closeModal(modal) {
+            modal.classList.remove('opacity-100');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
+
+        closeBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const m = e.target.closest('.fixed');
+                if (m) closeModal(m);
+            });
+        });
+
+        // Sound controller
+        toggleSoundBtn.addEventListener('click', () => {
+            STATE.soundEnabled = !STATE.soundEnabled;
+            if (STATE.soundEnabled) {
+                soundIcon.className = "fa-solid fa-volume-high";
+                sfx.playPopSound();
+            } else {
+                soundIcon.className = "fa-solid fa-volume-xmark";
+            }
+        });
+
+        // 5a. Skins modal builder
+        openSkinsBtn.addEventListener('click', () => {
+            const listContainer = document.getElementById('skins-list');
+            listContainer.innerHTML = ''; // Clean
+
+            SKINS.forEach((skin, idx) => {
+                const isUnlocked = STATE.score >= idx * 1000;
+                const isCurrent = STATE.skinIndex === idx;
+
+                const card = document.createElement('div');
+                card.className = `p-3 rounded-2xl border-2 flex items-center justify-between transition ${
+                    isCurrent ? 'bg-pink-100 border-pink-400' : isUnlocked ? 'bg-white border-amber-200' : 'bg-gray-100 border-gray-300 opacity-60'
+                }`;
+
+                card.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <!-- Tiny preview box -->
+                        <div class="w-10 h-10 rounded-full border border-black/10 flex items-center justify-center relative overflow-hidden" style="background: ${skin.bgGradient}">
+                            <div class="w-7 h-5 rounded-t-lg absolute bottom-1" style="background: ${skin.bodyColor}">
+                                <div class="w-full h-2 rounded-t-sm absolute top-0" style="background: ${skin.sauceColor}"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-sm text-gray-800">${skin.name}</h4>
+                            <p class="text-xs text-gray-500">${idx === 0 ? 'รสชาติตั้งต้น' : `ปลดล็อกที่การกด ${ (idx * 1000).toLocaleString() } ครั้ง`}</p>
+                        </div>
+                    </div>
+                    <div>
+                        ${
+                            isCurrent 
+                            ? '<span class="text-xs bg-pink-500 text-white font-black px-2.5 py-1 rounded-full"><i class="fa-solid fa-circle-check"></i> ใช้งานอยู่</span>'
+                            : isUnlocked 
+                            ? '<span class="text-xs text-emerald-600 font-bold"><i class="fa-solid fa-lock-open"></i> ปลดล็อกแล้ว</span>' 
+                            : '<span class="text-xs text-gray-500 font-bold"><i class="fa-solid fa-lock"></i> ยังไม่ปลด</span>'
+                        }
+                    </div>
+                `;
+                listContainer.appendChild(card);
+            });
+
+            openModal(skinsModal);
+        });
+
+        // 5b. REAL-TIME GLOBAL LEADERBOARD (No compound queries - Rule 2)
+        let leaderboardUnsubscribe = null;
+
+        openLeaderboardBtn.addEventListener('click', () => {
+            openModal(leaderboardModal);
+
+            const spinner = document.getElementById('leaderboard-spinner');
+            const itemsContainer = document.getElementById('leaderboard-items');
+            const userRankStatus = document.getElementById('user-rank-status');
+
+            spinner.classList.remove('hidden');
+            itemsContainer.classList.add('hidden');
+
+            if (!STATE.dbInitialized) {
+                spinner.classList.add('hidden');
+                itemsContainer.classList.remove('hidden');
+                itemsContainer.innerHTML = `
+                    <div class="p-4 bg-red-50 text-red-700 text-center rounded-2xl text-xs font-bold">
+                        <i class="fa-solid fa-triangle-exclamation text-lg mb-1 block"></i>
+                        ระบบออนไลน์ไม่เปิดใช้งานในขณะนี้ คุณสามารถเล่นเก็บสถิติส่วนตัวได้ตามปกติ
+                    </div>
+                `;
+                return;
+            }
+
+            // Unsubscribe existing to avoid memory leaks
+            if (leaderboardUnsubscribe) {
+                leaderboardUnsubscribe();
+            }
+
+            // Query leaderboard collection (Strict path protocol Rule 1, limit and complex sort ignored in queries - Rule 2)
+            const leaderboardQuery = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
+
+            leaderboardUnsubscribe = leaderboardQuery.onSnapshot((snapshot) => {
+                spinner.classList.add('hidden');
+                itemsContainer.classList.remove('hidden');
+                itemsContainer.innerHTML = '';
+
+                let list = [];
+                snapshot.forEach(doc => {
+                    list.push(doc.data());
+                });
+
+                // Sort purely in memory to fulfill Rule 2 (No indexes required)
+                list.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+                if (list.length === 0) {
+                    itemsContainer.innerHTML = `
+                        <div class="p-6 text-center text-amber-800/60 text-xs">
+                            ยังไม่มีผู้ลงแข่งเลย! มาร่วมกดเพื่อครองบัลลังก์แรกกัน!
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Render top 50 in memory
+                const renderLimit = Math.min(list.length, 50);
+                let myPositionText = "ยังไม่มีสถิติของคุณในอันดับโลก";
+
+                for (let i = 0; i < renderLimit; i++) {
+                    const record = list[i];
+                    const isMe = record.userId === STATE.userId;
+                    const rank = i + 1;
+
+                    if (isMe) {
+                        myPositionText = `🎉 คุณอยู่ที่อันดับ #${rank} จากผู้เล่นทั้งหมด ${list.length} คน!`;
+                    }
+
+                    // Style highlights for top players
+                    let rankBadge = `<span class="font-bold text-amber-900 w-6 text-center">${rank}</span>`;
+                    let highlightClass = isMe ? 'bg-amber-100 border-2 border-amber-500' : 'bg-white border border-amber-100';
+
+                    if (rank === 1) {
+                        rankBadge = `<span class="text-xl">🥇</span>`;
+                        highlightClass = isMe ? 'bg-amber-100 border-2 border-amber-500' : 'bg-yellow-50 border-2 border-amber-300';
+                    } else if (rank === 2) {
+                        rankBadge = `<span class="text-xl">🥈</span>`;
+                    } else if (rank === 3) {
+                        rankBadge = `<span class="text-xl">🥉</span>`;
+                    }
+
+                    const recordEl = document.createElement('div');
+                    recordEl.className = `p-3 rounded-2xl flex items-center justify-between ${highlightClass} transition transform hover:scale-[1.01]`;
+                    recordEl.innerHTML = `
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            ${rankBadge}
+                            <span class="font-extrabold text-sm truncate text-amber-950 ${isMe ? 'underline' : ''}">
+                                ${escapeHtml(record.username)} ${isMe ? ' (คุณ)' : ''}
+                            </span>
+                        </div>
+                        <div class="font-bold text-amber-900 text-sm whitespace-nowrap">
+                            ${(record.score || 0).toLocaleString()} <span class="text-[10px] text-amber-600">pops</span>
+                        </div>
+                    `;
+                    itemsContainer.appendChild(recordEl);
+                }
+
+                if (STATE.username) {
+                    userRankStatus.textContent = myPositionText;
+                } else {
+                    userRankStatus.textContent = "กรุณาบันทึกชื่อเล่นเพื่ออวดคะแนนบนตารางอันดับโลก!";
+                }
+
+            }, (error) => {
+                console.error("Leaderboard subscription failed", error);
+                spinner.classList.add('hidden');
+                itemsContainer.innerHTML = `<p class="text-xs text-red-600 text-center">เกิดข้อผิดพลาดในการดึงข้อมูลอันดับ กรุณาลองใหม่อีกครั้ง</p>`;
+            });
+        });
+
+        // Guard utility against XSS inside client inputs
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
+        // ==========================================
+        // 6. EVENT ATTACHMENTS (MOBILE & DESKTOP)
+        // ==========================================
+        
+        // Touch events for ultra fast response on phones
+        puddingBtn.addEventListener('touchstart', (e) => {
+            handlePuddingPress(e);
+        });
+        puddingBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            handlePuddingRelease();
+        });
+
+        // Mouse fallbacks for desktop play
+        puddingBtn.addEventListener('mousedown', (e) => {
+            if ('ontouchstart' in window) return; // avoid double trigger
+            handlePuddingPress(e);
+        });
+        puddingBtn.addEventListener('mouseup', () => {
+            if ('ontouchstart' in window) return;
+            handlePuddingRelease();
+        });
+        puddingBtn.addEventListener('mouseleave', () => {
+            if ('ontouchstart' in window) return;
+            handlePuddingRelease();
+        });
+
+        // Keyboard support (Space and Enter pushes pudding)
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'Enter') {
+                if (document.activeElement.tagName !== 'INPUT') {
+                    e.preventDefault();
+                    if (!puddingSvg.classList.contains('pudding-active')) {
+                        handlePuddingPress(null);
+                    }
+                }
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space' || e.code === 'Enter') {
+                if (document.activeElement.tagName !== 'INPUT') {
+                    handlePuddingRelease();
+                }
+            }
+        });
+
+        // Initial launch procedures
+        applySkinTheme();
+        setupOnlineLeaderboard();
+
+    </script>
+</body>
+</html>
