@@ -10,11 +10,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Mitr:wght@300;500;700&display=swap" rel="stylesheet">
     <!-- FontAwesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- Firebase SDKs (Compat version for script-tag global usage) -->
-    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
     <style>
         body {
@@ -263,7 +258,11 @@
         </button>
     </div>
 
-    <script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
         // ==========================================
         // 1. GAME STATE & CONFIGURATION
         // ==========================================
@@ -277,13 +276,13 @@
             dbInitialized: false
         };
 
-        // Initialize user ID if not exist
+        // Initialize temporary user ID if not exist
         if (!STATE.userId) {
             STATE.userId = 'user_' + Math.random().toString(36).substr(2, 9);
             localStorage.setItem('pudding_userid', STATE.userId);
         }
 
-        // Pudding Skins Configuration (Unlock every 1000 clicks)
+        // Pudding Skins Configuration
         const SKINS = [
             { name: "คาราเมลดั้งเดิม", bodyColor: "#fef3c7", sauceColor: "#b45309", bgGradient: "radial-gradient(circle, #fffdf0 0%, #ffecbe 100%)" },
             { name: "มัทฉะชาเขียวเข้มข้น", bodyColor: "#d9f99d", sauceColor: "#15803d", bgGradient: "radial-gradient(circle, #f0fdf4 0%, #dcfce7 100%)" },
@@ -323,12 +322,10 @@
 
                 const now = this.ctx.currentTime;
                 
-                // Sound 1: High frequency pop
                 const osc = this.ctx.createOscillator();
                 const gain = this.ctx.createGain();
                 
                 osc.type = 'sine';
-                // Pitch starts high, drops instantly for classic pop
                 osc.frequency.setValueAtTime(400, now);
                 osc.frequency.exponentialRampToValueAtTime(150, now + 0.1);
                 
@@ -341,7 +338,6 @@
                 osc.start(now);
                 osc.stop(now + 0.12);
 
-                // Sound 2: High pitch 'drip' click
                 const osc2 = this.ctx.createOscillator();
                 const gain2 = this.ctx.createGain();
                 osc2.type = 'triangle';
@@ -361,13 +357,11 @@
                 this.init();
                 const now = this.ctx.currentTime;
 
-                // Create spring-like 'boing' wobble
                 const osc = this.ctx.createOscillator();
                 const gain = this.ctx.createGain();
                 
                 osc.type = 'triangle';
                 osc.frequency.setValueAtTime(150, now);
-                // Vibrato effect for rubberiness
                 osc.frequency.linearRampToValueAtTime(200, now + 0.05);
                 osc.frequency.linearRampToValueAtTime(130, now + 0.1);
                 osc.frequency.linearRampToValueAtTime(170, now + 0.15);
@@ -386,43 +380,37 @@
         const sfx = new AudioSynth();
 
         // ==========================================
-        // 3. FIREBASE SETUP (Leaderboard Backend)
+        // 3. FIREBASE SETUP & SECURITY PROTOCOL
         // ==========================================
-        let db, auth;
+        let db = null;
+        let auth = null;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'pudding-pop-1';
 
-        // Check if config exists
-        if (typeof __firebase_config !== 'undefined') {
+        async function setupOnlineLeaderboard() {
+            if (typeof __firebase_config === 'undefined') {
+                console.warn("Online database not configured in current session.");
+                return;
+            }
+
             try {
                 const firebaseConfig = JSON.parse(__firebase_config);
-                // Initialize using Namespaced API
-                const app = firebase.initializeApp(firebaseConfig);
-                auth = firebase.auth();
-                db = firebase.firestore();
-                STATE.dbInitialized = true;
-            } catch (err) {
-                console.error("Firebase Initialization Failed:", err);
-            }
-        }
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
 
-        // Initialize Authentication & Setup Dynamic Observers
-        async function setupOnlineLeaderboard() {
-            if (!STATE.dbInitialized) return;
-
-            try {
-                // Anonymous auth standard protocol
+                // RULE 3: Perform authentication BEFORE running queries and wait for promise
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await auth.signInWithCustomToken(__initial_auth_token);
+                    await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
-                    await auth.signInAnonymously();
+                    await signInAnonymously(auth);
                 }
 
-                auth.onAuthStateChanged((user) => {
+                onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        STATE.userId = user.uid; // overwrite local with official uid
+                        STATE.userId = user.uid; // Synchronize official auth uid
                         localStorage.setItem('pudding_userid', STATE.userId);
+                        STATE.dbInitialized = true;
                         
-                        // Show active online indicator
                         if (STATE.username) {
                             showOnlineBadge();
                             syncScoreToOnline(STATE.score);
@@ -430,20 +418,19 @@
                     }
                 });
             } catch (error) {
-                console.error("Auth process error", error);
+                console.error("Firebase auth initialization failed:", error);
             }
         }
 
-        // Update database with latest score
+        // Synchronize state safely to server (RULE 1)
         async function syncScoreToOnline(targetScore) {
-            if (!STATE.dbInitialized || !auth.currentUser || !STATE.username) return;
-            
-            // Limit network overhead: only send if higher than previously sent score
+            if (!STATE.dbInitialized || !db || !auth || !auth.currentUser || !STATE.username) return;
             if (targetScore <= STATE.highestScoreSent) return;
 
-            const userDocRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard').doc(STATE.userId);
+            // RULE 1: STRICT PATH "/artifacts/{appId}/public/data/leaderboard/{userId}"
+            const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'leaderboard', STATE.userId);
             try {
-                await userDocRef.set({
+                await setDoc(userDocRef, {
                     username: STATE.username,
                     score: targetScore,
                     lastUpdated: Date.now(),
@@ -451,7 +438,7 @@
                 }, { merge: true });
                 STATE.highestScoreSent = targetScore;
             } catch (e) {
-                console.error("Failed to sync score online", e);
+                console.error("Failed to sync score to online database:", e);
             }
         }
 
@@ -472,25 +459,21 @@
         const userStatusText = document.getElementById('user-status-text');
         const currentSavedNameDisplay = document.getElementById('current-saved-name');
         
-        // Modals
         const leaderboardModal = document.getElementById('leaderboard-modal');
         const skinsModal = document.getElementById('skins-modal');
         const openLeaderboardBtn = document.getElementById('open-leaderboard-btn');
         const openSkinsBtn = document.getElementById('open-skins-btn');
         const closeBtns = document.querySelectorAll('.close-modal-btn');
         
-        // Sound toggle
         const toggleSoundBtn = document.getElementById('toggle-sound-btn');
         const soundIcon = document.getElementById('sound-icon');
 
-        // Initial setup on screen
         if (STATE.username) {
             usernameInput.value = STATE.username;
             currentSavedNameDisplay.textContent = STATE.username;
             userStatusText.classList.remove('hidden');
         }
 
-        // Apply skin theme properties
         function applySkinTheme() {
             const currentSkin = SKINS[STATE.skinIndex];
             puddingBody.setAttribute('fill', currentSkin.bodyColor);
@@ -498,7 +481,6 @@
             skinNameDisplay.textContent = currentSkin.name;
             document.body.style.background = currentSkin.bgGradient;
 
-            // Update info for next skin
             const nextMilestone = (STATE.skinIndex + 1) * 1000;
             const remaining = nextMilestone - STATE.score;
 
@@ -512,17 +494,15 @@
             }
         }
 
-        // Update Score and handle skin updates
         function addScore(amount, clickEvent) {
             STATE.score += amount;
             scoreDisplay.textContent = STATE.score.toLocaleString();
             localStorage.setItem('pudding_score', STATE.score);
 
-            // Determine Skin upgrade
             const newSkinIndex = Math.min(Math.floor(STATE.score / 1000), SKINS.length - 1);
             if (newSkinIndex > STATE.skinIndex) {
                 STATE.skinIndex = newSkinIndex;
-                sfx.playBoingSound(); // Special level up sound
+                sfx.playBoingSound();
                 showCelebrationEffect();
             }
 
@@ -531,21 +511,17 @@
             syncScoreToOnline(STATE.score);
         }
 
-        // Floating dynamic numbers at exact finger/mouse click point
         function createFloatyNumber(amount, event) {
             const num = document.createElement('div');
             num.classList.add('pop-number');
             num.textContent = `+${amount}`;
             
-            // Random colors for nice visual pop
             const colors = ['#b45309', '#be185d', '#15803d', '#4c1d95', '#0369a1', '#b91c1c'];
             const randomColor = colors[Math.floor(Math.random() * colors.length)];
             num.style.color = randomColor;
 
-            // Get exact coordinates
             let x, y;
             if (event) {
-                const rect = puddingBtn.getBoundingClientRect();
                 if (event.touches && event.touches.length > 0) {
                     x = event.touches[0].clientX;
                     y = event.touches[0].clientY;
@@ -554,7 +530,6 @@
                     y = event.clientY;
                 }
             } else {
-                // Fallback default center
                 const rect = puddingBtn.getBoundingClientRect();
                 x = rect.left + rect.width / 2;
                 y = rect.top + rect.height / 2;
@@ -565,37 +540,28 @@
 
             document.body.appendChild(num);
 
-            // Remove element after finish
             setTimeout(() => {
                 num.remove();
             }, 800);
         }
 
-        // Pop Cat mouth opening & pudding spring compression
         function handlePuddingPress(event) {
-            event.preventDefault(); // Stop default zooming/scrolling on double tap
-            
-            // 1. Audio synthesis trigger
+            if (event) event.preventDefault();
             sfx.playPopSound();
 
-            // 2. Playful mouth opening
             puddingMouth.setAttribute('d', 'M92,142 C92,154 108,154 108,142 Z');
             puddingMouth.setAttribute('fill', '#451a03');
 
-            // 3. Playful active wobble classes
             puddingSvg.classList.remove('pudding-wobble');
             puddingSvg.classList.add('pudding-active');
 
-            // Add points
             addScore(1, event);
         }
 
         function handlePuddingRelease() {
-            // Restore mouth shape
             puddingMouth.setAttribute('d', 'M96,142 Q100,146 104,142');
             puddingMouth.setAttribute('fill', 'none');
 
-            // Apply rebound spring compression before resetting to idle
             puddingSvg.classList.remove('pudding-active');
             puddingSvg.classList.add('pudding-rebound');
 
@@ -605,7 +571,6 @@
             }, 100);
         }
 
-        // Celebration Sparkles when new skin unlocked
         function showCelebrationEffect() {
             for (let i = 0; i < 20; i++) {
                 const conf = document.createElement('div');
@@ -631,7 +596,6 @@
             userStatusText.classList.remove('hidden');
         }
 
-        // Update username process
         saveUsernameBtn.addEventListener('click', () => {
             const val = usernameInput.value.trim();
             if (!val) return;
@@ -639,19 +603,13 @@
             STATE.username = val;
             localStorage.setItem('pudding_username', val);
             showOnlineBadge();
-
-            // Fire and forget score synchronization to leaderboards
             syncScoreToOnline(STATE.score);
-
-            // Pop sound indicator
             sfx.playBoingSound();
         });
 
         // ==========================================
         // 5. INTERACTIVE MODALS & REALTIME DATA
         // ==========================================
-        
-        // Show/Hide Helpers
         function openModal(modal) {
             modal.classList.remove('hidden');
             setTimeout(() => {
@@ -673,7 +631,6 @@
             });
         });
 
-        // Sound controller
         toggleSoundBtn.addEventListener('click', () => {
             STATE.soundEnabled = !STATE.soundEnabled;
             if (STATE.soundEnabled) {
@@ -684,10 +641,9 @@
             }
         });
 
-        // 5a. Skins modal builder
         openSkinsBtn.addEventListener('click', () => {
             const listContainer = document.getElementById('skins-list');
-            listContainer.innerHTML = ''; // Clean
+            listContainer.innerHTML = '';
 
             SKINS.forEach((skin, idx) => {
                 const isUnlocked = STATE.score >= idx * 1000;
@@ -700,7 +656,6 @@
 
                 card.innerHTML = `
                     <div class="flex items-center gap-3">
-                        <!-- Tiny preview box -->
                         <div class="w-10 h-10 rounded-full border border-black/10 flex items-center justify-center relative overflow-hidden" style="background: ${skin.bgGradient}">
                             <div class="w-7 h-5 rounded-t-lg absolute bottom-1" style="background: ${skin.bodyColor}">
                                 <div class="w-full h-2 rounded-t-sm absolute top-0" style="background: ${skin.sauceColor}"></div>
@@ -727,7 +682,7 @@
             openModal(skinsModal);
         });
 
-        // 5b. REAL-TIME GLOBAL LEADERBOARD (No compound queries - Rule 2)
+        // 5b. REAL-TIME GLOBAL LEADERBOARD (RULE 2 & 3 Compliance)
         let leaderboardUnsubscribe = null;
 
         openLeaderboardBtn.addEventListener('click', () => {
@@ -740,51 +695,50 @@
             spinner.classList.remove('hidden');
             itemsContainer.classList.add('hidden');
 
-            if (!STATE.dbInitialized) {
+            if (!STATE.dbInitialized || !db) {
                 spinner.classList.add('hidden');
                 itemsContainer.classList.remove('hidden');
                 itemsContainer.innerHTML = `
                     <div class="p-4 bg-red-50 text-red-700 text-center rounded-2xl text-xs font-bold">
                         <i class="fa-solid fa-triangle-exclamation text-lg mb-1 block"></i>
-                        ระบบออนไลน์ไม่เปิดใช้งานในขณะนี้ คุณสามารถเล่นเก็บสถิติส่วนตัวได้ตามปกติ
+                        ระบบจัดอันดับออฟไลน์อยู่ชั่วคราว คุณยังคงเล่นและเก็บประวัติภายในเครื่องต่อได้ปกติครับ
                     </div>
                 `;
                 return;
             }
 
-            // Unsubscribe existing to avoid memory leaks
             if (leaderboardUnsubscribe) {
                 leaderboardUnsubscribe();
             }
 
-            // Query leaderboard collection (Strict path protocol Rule 1, limit and complex sort ignored in queries - Rule 2)
-            const leaderboardQuery = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
+            // RULE 1: STRICT PATH "/artifacts/{appId}/public/data/leaderboard"
+            // RULE 2: No complex query order/limit filters -> fetch simple collection
+            const leaderboardQuery = collection(db, 'artifacts', appId, 'public', 'data', 'leaderboard');
 
-            leaderboardUnsubscribe = leaderboardQuery.onSnapshot((snapshot) => {
+            leaderboardUnsubscribe = onSnapshot(leaderboardQuery, (snapshot) => {
                 spinner.classList.add('hidden');
                 itemsContainer.classList.remove('hidden');
                 itemsContainer.innerHTML = '';
 
                 let list = [];
-                snapshot.forEach(doc => {
-                    list.push(doc.data());
+                snapshot.forEach(docSnap => {
+                    list.push(docSnap.data());
                 });
 
-                // Sort purely in memory to fulfill Rule 2 (No indexes required)
+                // RULE 2: Process Sorting in memory safely on client side
                 list.sort((a, b) => (b.score || 0) - (a.score || 0));
 
                 if (list.length === 0) {
                     itemsContainer.innerHTML = `
                         <div class="p-6 text-center text-amber-800/60 text-xs">
-                            ยังไม่มีผู้ลงแข่งเลย! มาร่วมกดเพื่อครองบัลลังก์แรกกัน!
+                            ยังไม่มีผู้ลงแข่งเลย! มาร่วมกดเพื่อครองอันดับแรกของโลกกัน!
                         </div>
                     `;
                     return;
                 }
 
-                // Render top 50 in memory
                 const renderLimit = Math.min(list.length, 50);
-                let myPositionText = "ยังไม่มีสถิติของคุณในอันดับโลก";
+                let myPositionText = "ยังไม่มีคะแนนของคุณในตารางอันดับโลก";
 
                 for (let i = 0; i < renderLimit; i++) {
                     const record = list[i];
@@ -792,10 +746,9 @@
                     const rank = i + 1;
 
                     if (isMe) {
-                        myPositionText = `🎉 คุณอยู่ที่อันดับ #${rank} จากผู้เล่นทั้งหมด ${list.length} คน!`;
+                        myPositionText = `🎉 คุณอยู่ที่อันดับ #${rank} จากผู้แข่งขันทั้งหมด ${list.length} คน!`;
                     }
 
-                    // Style highlights for top players
                     let rankBadge = `<span class="font-bold text-amber-900 w-6 text-center">${rank}</span>`;
                     let highlightClass = isMe ? 'bg-amber-100 border-2 border-amber-500' : 'bg-white border border-amber-100';
 
@@ -827,17 +780,16 @@
                 if (STATE.username) {
                     userRankStatus.textContent = myPositionText;
                 } else {
-                    userRankStatus.textContent = "กรุณาบันทึกชื่อเล่นเพื่ออวดคะแนนบนตารางอันดับโลก!";
+                    userRankStatus.textContent = "กรุณาบันทึกชื่อเล่นเพื่อแสดงคะแนนของคุณบนอันดับโลก!";
                 }
 
             }, (error) => {
-                console.error("Leaderboard subscription failed", error);
+                console.error("Leaderboard database error:", error);
                 spinner.classList.add('hidden');
-                itemsContainer.innerHTML = `<p class="text-xs text-red-600 text-center">เกิดข้อผิดพลาดในการดึงข้อมูลอันดับ กรุณาลองใหม่อีกครั้ง</p>`;
+                itemsContainer.innerHTML = `<p class="text-xs text-red-600 text-center">เกิดข้อผิดพลาดในการโหลดอันดับ กรุณาลองตรวจสอบการเชื่อมต่อของคุณ</p>`;
             });
         });
 
-        // Guard utility against XSS inside client inputs
         function escapeHtml(text) {
             const map = {
                 '&': '&amp;',
@@ -852,8 +804,6 @@
         // ==========================================
         // 6. EVENT ATTACHMENTS (MOBILE & DESKTOP)
         // ==========================================
-        
-        // Touch events for ultra fast response on phones
         puddingBtn.addEventListener('touchstart', (e) => {
             handlePuddingPress(e);
         });
@@ -862,9 +812,8 @@
             handlePuddingRelease();
         });
 
-        // Mouse fallbacks for desktop play
         puddingBtn.addEventListener('mousedown', (e) => {
-            if ('ontouchstart' in window) return; // avoid double trigger
+            if ('ontouchstart' in window) return;
             handlePuddingPress(e);
         });
         puddingBtn.addEventListener('mouseup', () => {
@@ -876,7 +825,6 @@
             handlePuddingRelease();
         });
 
-        // Keyboard support (Space and Enter pushes pudding)
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Space' || e.code === 'Enter') {
                 if (document.activeElement.tagName !== 'INPUT') {
@@ -895,7 +843,6 @@
             }
         });
 
-        // Initial launch procedures
         applySkinTheme();
         setupOnlineLeaderboard();
 
